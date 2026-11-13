@@ -31,7 +31,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 curl http://localhost:8000/v1/health
 ```
 
-打开 `http://localhost:8000/docs` 查看 Swagger；`GET /v1/schema` 返回机器可读的输入/输出 JSON Schema（供 AI 自发现）。
+打开 `http://localhost:8000/docs` 查看 Swagger；`GET /v1/schema` 返回机器可读的输入/输出 JSON Schema 与错误码表（供 AI 自发现）。
 
 可选环境变量：
 
@@ -75,10 +75,10 @@ curl http://localhost:8000/v1/health
 **可观测与可控：**
 - `data.source_stats.engines`：`[{engine, status, count, elapsed_ms, error}]`，`status` 为 `ok` / `empty` / `failed`，AI 可据此判断数据覆盖度。
 - `data.results[].engine`：该条结果来自哪个引擎（多引擎命中时取贡献最高的）。
-- 请求级指定引擎：`POST {"query":"...","engines":["wikipedia","hn"]}`。
+- 请求级指定引擎：`POST {"query":"...","engines":["wikipedia","hn"]}` 或 `GET /v1/search?query=...&engines=arxiv,hn`。
 - 服务端裁剪：`HAPPYSEARCH_FREE_ENGINES=bing_html,bing_rss,wikipedia`；未知引擎名自动忽略并记日志。
 - 配置商业 Provider（`tavily` / `serper` / `bing`）且调用失败时，自动回退到免配置引擎聚合，并在 `engines` 里记录失败原因。
-- 实时清单：`GET /v1/health` 的 `free_engines`。
+- 实时清单：`GET /v1/health` 的 `free_engine_catalog` 与 `GET /v1/schema` 的 `constraints.free_engines_available`。
 
 > 本机实测（当前网络）：`bing_html`、`bing_rss`、`so360_html`、`baidu_html` 等可用，DDG / Wikipedia / Google News 连接超时；得益于多引擎隔离，仍正常返回 5 条融合排序结果。
 
@@ -115,7 +115,7 @@ AI 可完全控制单次返回条数，无需服务端改配置：
 - `requested`：AI 请求条数（`top_k`/`limit` 归一化后的值）。
 - `returned`：本页实际返回条数；`returned < requested` 表示候选不足，AI 可据此决定是否放宽查询或换源。
 
-上限可通过 `GET /v1/schema` 里 `SearchRequest` 的 `top_k` / `limit` / `page_size` 的 `maximum` 字段自发现；超过上限返回标准 `INVALID_REQUEST` 错误信封并带 `error.field`。
+上限可通过 `GET /v1/schema` 的 `constraints.top_k_max` / `top_k_hard_max` 和 `GET /v1/health` 的 `max_results_per_page` 自发现；超过上限返回标准 `INVALID_REQUEST` 错误信封并带 `error.field`。
 
 ## 鲁棒性与故障降级
 
@@ -132,10 +132,10 @@ AI 可完全控制单次返回条数，无需服务端改配置：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/v1/search` | 多源检索、排序、分页；`enrich_results=true` 时联动抓取网页 |
-| POST | `/v1/fetch` | **爬取网页 → 正文/元数据 → 结构化 JSON** |
-| POST | `/v1/index` | 写入本地文档索引 |
-| GET | `/v1/schema` | 输入输出 Schema |
+| POST / GET | `/v1/search` | 多源检索、排序、分页；`enrich_results=true` 时联动抓取网页 |
+| POST / GET | `/v1/fetch` | **爬取网页 → 正文/元数据 → 结构化 JSON** |
+| POST | `/v1/documents` | 写入本地文档索引 |
+| GET | `/v1/schema` | 输入输出 Schema + 错误码 + 约束 |
 | GET | `/v1/health` | 健康检查 |
 
 ## 调用示例
@@ -150,7 +150,7 @@ AI 自定义返回条数（`top_k` 或别名 `limit`，`page_size` 未给时自�
 
 ```bash
 curl -X POST http://localhost:8000/v1/search -H "Content-Type: application/json" -d "{\"query\":\"大模型推理优化\",\"top_k\":37}"
-curl -X POST http://localhost:8000/v1/search -H "Content-Type: application/json" -d "{\"query\":\"大模型推理优化\",\"limit\":50,\"page\":2,\"page_size\":10}"
+curl "http://localhost:8000/v1/search?query=大模型推理优化&limit=50&page=2&page_size=10"
 ```
 
 按请求指定免配置引擎（只查维基百科与 Hacker News）：
@@ -170,6 +170,12 @@ curl -X POST http://localhost:8000/v1/search -H "Content-Type: application/json"
 ```bash
 curl -X POST http://localhost:8000/v1/fetch -H "Content-Type: application/json" -d "{\"urls\":[\"https://example.com\"],\"include_links\":true,\"max_chars\":20000}"
 ```
+
+```bash
+curl "http://localhost:8000/v1/fetch?url=https://example.com&include_metadata=true"
+```
+
+流式（SSE）：`GET /v1/search?query=...&stream=true`，逐条 `event: result`，末尾 `event: final` 携带完整统一信封。
 
 ## 响应约定（AI 解析要点）
 
