@@ -72,7 +72,7 @@ def offline(monkeypatch, tmp_path):
             RawResult(
                 title="推理优化实践",
                 url="https://example.com/practice",
-                snippet="量化与批处理提升大模型推理吐吞",
+                snippet="量化与批处理提升大模型推理吞吐",
                 source="web",
                 raw_score=0.8,
                 rank_in_source=2,
